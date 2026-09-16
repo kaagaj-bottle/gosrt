@@ -136,7 +136,8 @@ type Config struct {
 	// SRTO_PEERLATENCY
 	PeerLatency time.Duration
 
-	// Receiver buffer size. Bytes.
+	// Receiver congestion buffer limit in payload bytes. Zero means unlimited.
+	// Exceeding the byte or packet-count limit closes the connection.
 	// SRTO_RCVBUF
 	ReceiverBufferSize uint32
 
@@ -144,7 +145,9 @@ type Config struct {
 	// SRTO_RCVLATENCY
 	ReceiverLatency time.Duration
 
-	// Sender buffer size. Bytes.
+	// Sender congestion buffer limit in payload bytes, including unacknowledged
+	// packets. Zero means unlimited. Exceeding the byte or packet-count limit
+	// closes the connection.
 	// SRTO_SNDBUF
 	SendBufferSize uint32
 

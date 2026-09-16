@@ -14,6 +14,13 @@ import (
 
 // ReceiveConfig is the configuration for the liveRecv congestion control
 type ReceiveConfig struct {
+	// MaxBufferBytes limits buffered payload bytes. Zero means unlimited.
+	// A nonzero limit also caps buffered packets at max(1, MaxBufferBytes / 128).
+	MaxBufferBytes uint64
+	// OnBufferFull is called once on overflow, while holding the queue lock.
+	// It must not synchronously call back into congestion control. After overflow,
+	// all further packets are rejected, even if OnBufferFull is nil.
+	OnBufferFull          func()
 	InitialSequenceNumber circular.Number
 	PeriodicACKInterval   uint64 // microseconds
 	PeriodicNAKInterval   uint64 // microseconds
@@ -24,6 +31,9 @@ type ReceiveConfig struct {
 
 // receiver implements the Receiver interface
 type receiver struct {
+	maxBufferBytes              uint64
+	onBufferFull                func()
+	overflowed                  bool
 	maxSeenSequenceNumber       circular.Number
 	lastACKSequenceNumber       circular.Number
 	lastDeliveredSequenceNumber circular.Number
@@ -68,6 +78,8 @@ type receiver struct {
 // NewReceiver takes a ReceiveConfig and returns a new Receiver
 func NewReceiver(config ReceiveConfig) congestion.Receiver {
 	r := &receiver{
+		maxBufferBytes:              config.MaxBufferBytes,
+		onBufferFull:                config.OnBufferFull,
 		maxSeenSequenceNumber:       config.InitialSequenceNumber.Dec(),
 		lastACKSequenceNumber:       config.InitialSequenceNumber.Dec(),
 		lastDeliveredSequenceNumber: config.InitialSequenceNumber.Dec(),
@@ -136,6 +148,20 @@ func (r *receiver) Push(pkt packet.Packet) {
 	defer r.lock.Unlock()
 
 	if pkt == nil {
+		return
+	}
+	// Cap both payload bytes and packet count (including empty packets). Once
+	// exceeded, drop further input while the connection is being closed.
+	if r.overflowed || (r.maxBufferBytes > 0 &&
+		(r.statistics.ByteBuf+pkt.Len() > r.maxBufferBytes ||
+			r.statistics.PktBuf >= max(uint64(1), r.maxBufferBytes/128))) {
+		pkt.Decommission()
+		if !r.overflowed {
+			r.overflowed = true
+			if r.onBufferFull != nil {
+				r.onBufferFull()
+			}
+		}
 		return
 	}
 

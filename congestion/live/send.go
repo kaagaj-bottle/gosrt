@@ -12,6 +12,13 @@ import (
 
 // SendConfig is the configuration for the liveSend congestion control
 type SendConfig struct {
+	// MaxBufferBytes limits buffered payload bytes. Zero means unlimited.
+	// A nonzero limit also caps buffered packets at max(1, MaxBufferBytes / 128).
+	MaxBufferBytes uint64
+	// OnBufferFull is called once on overflow, while holding the queue lock.
+	// It must not synchronously call back into congestion control. After overflow,
+	// all further packets are rejected, even if OnBufferFull is nil.
+	OnBufferFull          func()
 	InitialSequenceNumber circular.Number
 	DropThreshold         uint64
 	MaxBW                 int64
@@ -23,6 +30,9 @@ type SendConfig struct {
 
 // sender implements the Sender interface
 type sender struct {
+	maxBufferBytes     uint64
+	onBufferFull       func()
+	overflowed         bool
 	nextSequenceNumber circular.Number
 	dropThreshold      uint64
 
@@ -60,6 +70,8 @@ type sender struct {
 // NewSender takes a SendConfig and returns a new Sender
 func NewSender(config SendConfig) congestion.Sender {
 	s := &sender{
+		maxBufferBytes:     config.MaxBufferBytes,
+		onBufferFull:       config.OnBufferFull,
 		nextSequenceNumber: config.InitialSequenceNumber,
 		dropThreshold:      config.DropThreshold,
 		packetList:         list.New(),
@@ -122,6 +134,20 @@ func (s *sender) Push(p packet.Packet) {
 	defer s.lock.Unlock()
 
 	if p == nil {
+		return
+	}
+	// Cap both payload bytes and packet count (including empty packets). Once
+	// exceeded, drop further input while the connection is being closed.
+	if s.overflowed || (s.maxBufferBytes > 0 &&
+		(s.statistics.ByteBuf+p.Len() > s.maxBufferBytes ||
+			s.statistics.PktBuf >= max(uint64(1), s.maxBufferBytes/128))) {
+		p.Decommission()
+		if !s.overflowed {
+			s.overflowed = true
+			if s.onBufferFull != nil {
+				s.onBufferFull()
+			}
+		}
 		return
 	}
 

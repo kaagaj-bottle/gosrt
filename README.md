@@ -186,6 +186,14 @@ known options (similar to [srt-live-transmit](https://github.com/Haivision/srt/b
 | `transtype`          | `live`                 | Transmission type. Must be `live`.                                      |
 | `tsbpdmode`          | `bool`                 | Enable timestamp-based packet delivery mode.                            |
 
+`rcvbuf` and `sndbuf` limit the payload bytes held in the receive and send
+congestion buffers. The send limit includes packets awaiting acknowledgement.
+Zero (the default) means unlimited. A nonzero limit also caps the number of
+buffered packets at `max(1, limit / 128)`, including empty packets. Exceeding
+either limit closes the connection asynchronously and rejects further packets.
+Transport channels and packet metadata use additional memory outside the payload
+byte budgets.
+
 ### Usage
 
 Reading from a SRT sender and play with `ffplay`:

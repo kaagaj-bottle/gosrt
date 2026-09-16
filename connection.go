@@ -321,6 +321,8 @@ func newSRTConn(config srtConnConfig) *srtConn {
 	// 4.8.1.  Packet Acknowledgement (ACKs, ACKACKs) -> periodicACK = 10 milliseconds
 	// 4.8.2.  Packet Retransmission (NAKs) -> periodicNAK at least 20 milliseconds
 	c.recv = live.NewReceiver(live.ReceiveConfig{
+		MaxBufferBytes:        uint64(c.config.ReceiverBufferSize),
+		OnBufferFull:          func() { go c.close() },
 		InitialSequenceNumber: c.initialPacketSequenceNumber,
 		PeriodicACKInterval:   10_000,
 		PeriodicNAKInterval:   20_000,
@@ -335,6 +337,8 @@ func newSRTConn(config srtConnConfig) *srtConn {
 	c.dropThreshold += 20_000
 
 	c.snd = live.NewSender(live.SendConfig{
+		MaxBufferBytes:        uint64(c.config.SendBufferSize),
+		OnBufferFull:          func() { go c.close() },
 		InitialSequenceNumber: c.initialPacketSequenceNumber,
 		DropThreshold:         c.dropThreshold,
 		MaxBW:                 c.config.MaxBW,
